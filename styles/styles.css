@@ -20,7 +20,6 @@
   --text-color: var(--foreground);
   --link-color: var(--primary);
   --link-hover-color: var(--primary-hover);
-
   --body-font-family: var(--font-sans);
   --heading-font-family: var(--font-sans);
 
@@ -28,14 +27,12 @@
   --body-font-size-m: 15px;
   --body-font-size-s: 13px;
   --body-font-size-xs: 12px;
-
   --heading-font-size-xxl: 31px;
   --heading-font-size-xl: 23px;
   --heading-font-size-l: 20px;
   --heading-font-size-m: 17px;
   --heading-font-size-s: 15px;
   --heading-font-size-xs: 13px;
-
   --nav-height: 53px;
 }
 
@@ -44,14 +41,12 @@
     --body-font-size-m: 15px;
     --body-font-size-s: 13px;
     --body-font-size-xs: 12px;
-
     --heading-font-size-xxl: 36px;
     --heading-font-size-xl: 28px;
     --heading-font-size-l: 23px;
     --heading-font-size-m: 20px;
     --heading-font-size-s: 17px;
     --heading-font-size-xs: 15px;
-
     --nav-height: 64px;
   }
 }

@@ -14,6 +14,7 @@
   --hero-muted: rgb(231 233 234 / 70%);
   --hero-blue: #1d9bf0;
   --hero-blue-hover: #1a8cd8;
+
   position: relative;
   display: block;
   min-height: min(100vh, 720px);
@@ -41,7 +42,7 @@
   z-index: 0;
 }
 
-.hero-mesh--wire {
+.hero-mesh-wire {
   opacity: 0.55;
   mix-blend-mode: screen;
   z-index: 1;
@@ -143,7 +144,6 @@
     #e7e9ea 100%
   );
   background-size: 200% 200%;
-  -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
   filter: url('#hero-text-glow');
@@ -168,6 +168,14 @@
   transition: opacity 0.6s ease 0.55s, transform 0.6s ease 0.55s;
 }
 
+.hero:not(.hero-shader) p {
+  margin: 0 0 16px;
+  max-width: 42ch;
+  font-size: var(--body-font-size-m);
+  line-height: 1.333;
+  color: var(--muted-foreground);
+}
+
 .hero-ready .hero-inner > p:not(.button-wrapper) {
   opacity: 1;
   transform: translateY(0);
@@ -188,7 +196,7 @@
   transform: translateY(0);
 }
 
-.hero-actions--gooey {
+.hero-actions-gooey {
   filter: url('#hero-gooey-filter');
 }
 
@@ -210,14 +218,13 @@
 }
 
 .hero-actions a.button.secondary,
-.hero-actions a.button:not(.primary):not(.accent):first-of-type {
+.hero-actions a.button:not(.primary, .accent):first-of-type {
   border: 2px solid rgb(255 255 255 / 30%);
   background: transparent;
   color: var(--hero-fg);
 }
 
-.hero-actions a.button.secondary:hover,
-.hero-actions a.button:not(.primary):not(.accent):first-of-type:hover {
+.hero-actions a.button.secondary:hover {
   background: rgb(255 255 255 / 10%);
   border-color: rgb(29 155 240 / 50%);
   color: #e7e9ea;
@@ -229,6 +236,12 @@
   border: none;
   background: linear-gradient(90deg, var(--hero-blue) 0%, var(--hero-blue-hover) 100%);
   color: #fff;
+}
+
+.hero-actions a.button:not(.primary, .accent):first-of-type:hover {
+  background: rgb(255 255 255 / 10%);
+  border-color: rgb(29 155 240 / 50%);
+  color: #e7e9ea;
 }
 
 .hero-actions a.button.primary:hover,
@@ -363,14 +376,6 @@
   font-size: var(--heading-font-size-xxl);
   font-weight: 700;
   line-height: 1.15;
-}
-
-.hero:not(.hero-shader) p {
-  margin: 0 0 16px;
-  max-width: 42ch;
-  font-size: var(--body-font-size-m);
-  line-height: 1.333;
-  color: var(--muted-foreground);
 }
 
 .hero:not(.hero-shader) picture {

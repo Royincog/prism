@@ -194,7 +194,7 @@ function wrapActions(inner) {
   const wrappers = [...inner.querySelectorAll('p.button-wrapper')];
   if (wrappers.length < 2) return;
   const group = document.createElement('div');
-  group.className = 'hero-actions hero-actions--gooey';
+  group.className = 'hero-actions hero-actions-gooey';
   const first = wrappers[0];
   first.parentNode.insertBefore(group, first);
   wrappers.forEach((w) => group.append(w));
@@ -212,7 +212,7 @@ export default function decorate(block) {
   if (picture) picture.classList.add('hero-shader-photo');
 
   block.append(createMeshCanvas('hero-mesh'));
-  block.append(createMeshCanvas('hero-mesh hero-mesh--wire'));
+  block.append(createMeshCanvas('hero-mesh hero-mesh-wire'));
   block.append(injectFilters(svgNS));
   block.append(inner);
 
@@ -227,8 +227,8 @@ export default function decorate(block) {
   wrapActions(inner);
   block.append(buildOrbit());
 
-  const mesh = block.querySelector('canvas.hero-mesh:not(.hero-mesh--wire)');
-  const wire = block.querySelector('canvas.hero-mesh--wire');
+  const mesh = block.querySelector('canvas.hero-mesh:not(.hero-mesh-wire)');
+  const wire = block.querySelector('canvas.hero-mesh-wire');
   let teardown = () => {};
   if (mesh && wire) {
     teardown = initMeshAnimation(block, mesh, wire);

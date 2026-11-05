@@ -62,8 +62,23 @@ header nav a:any-link {
   transition: background-color 0.15s ease, color 0.15s ease;
 }
 
+header .nav-brand a:any-link {
+  padding: 8px 0;
+}
+
 header nav a:any-link:hover {
   color: var(--foreground);
+}
+
+header nav a:any-link:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+header nav .nav-tools a:any-link {
+  padding: 8px 16px;
+  font-weight: 500;
+  border-radius: 9999px;
 }
 
 header nav .nav-sections a:any-link {
@@ -75,12 +90,6 @@ header nav .nav-sections a:any-link {
 header nav .nav-sections a:any-link:hover,
 header nav .nav-sections a:any-link:focus-visible {
   background-color: var(--surface-elevated);
-}
-
-header nav a:any-link:focus-visible,
-header nav .nav-sections .nav-drop > button:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: 2px;
 }
 
 /* hamburger */
@@ -187,10 +196,6 @@ header .nav-brand {
   letter-spacing: -0.01em;
 }
 
-header .nav-brand a:any-link {
-  padding: 8px 0;
-}
-
 header nav .nav-brand img {
   width: 128px;
   height: auto;
@@ -239,6 +244,11 @@ header nav .nav-sections .nav-drop > button {
 header nav .nav-sections .nav-drop > button:hover,
 header nav .nav-sections .nav-drop > button[aria-expanded='true'] {
   background-color: var(--surface-elevated);
+}
+
+header nav .nav-sections .nav-drop > button:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
 }
 
 header nav .nav-sections .nav-drop > button::after {
@@ -308,7 +318,7 @@ header nav .nav-sections .nav-drop > button[aria-expanded='false'] + ul {
     background-color: var(--card);
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    box-shadow: 0 8px 24px rgb(0 0 0 / 40%);
     white-space: initial;
   }
 
@@ -334,12 +344,6 @@ header nav .nav-tools {
   display: flex;
   align-items: center;
   gap: 8px;
-}
-
-header nav .nav-tools a:any-link {
-  padding: 8px 16px;
-  font-weight: 500;
-  border-radius: 9999px;
 }
 
 header nav .nav-tools a:any-link:hover {
