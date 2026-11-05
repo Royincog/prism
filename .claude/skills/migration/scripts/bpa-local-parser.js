@@ -1,0 +1,890 @@
+#!/usr/bin/env node
+
+/**
+ * BPA Local Parser Script
+ * 
+ * Reads BPA CSV files from the local filesystem and creates a unified code transformer collection
+ * that matches the cloud-adoption-service format.
+ * 
+ * Usage:
+ *   node bpa-local-parser.js <bpa-csv-file-path> [output-directory]
+ * 
+ * Example:
+ *   node bpa-local-parser.js ./cleaned_file6.csv ./unified-collections
+ */
+
+const fs = require('fs');
+const path = require('path');
+
+// Pattern to subtype mapping (matching cam-bpa-fetcher.ts)
+const PATTERN_TO_SUBTYPE = {
+  scheduler: "sling.commons.scheduler",
+  assetApi: "unsupported.asset.api",
+  guavaCache: "custom.guava.cache",
+  oakIndex: "oak.index.definition",
+  inputStream: "java.io.inputstream",
+};
+
+// CSV subtype to pattern mapping (based on actual CSV structure)
+const CSV_SUBTYPE_TO_PATTERN = {
+  "unsupported.asset.api": "assetApi",
+  "javax.jcr.observation.EventListener": "eventListener",
+  "org.apache.sling.api.resource.observation.ResourceChangeListener": "resourceChangeListener",
+  "org.osgi.service.event.EventHandler": "eventHandler",
+  "custom.guava.cache": "guavaCache",
+  "index.rule.violation": "oakIndex",
+  "standard.index.modification": "oakIndex",
+  "java.io.inputstream": "inputStream"
+};
+
+// Known scheduler identifier
+const SCHEDULER_IDENTIFIER = "org.apache.sling.commons.scheduler";
+
+// Content/legacy-UI subtypes whose findings are keyed by a JCR node path
+// (`identifier`), not a Java class name. Extracted generically into the
+// unified collection so the migration runbook + Branch C/D can consume them.
+//   cdw                    → custom.classic.widget
+//   lui (dialogs + more)   → legacy.dialog.classic / .coral2 / .custom.component / .static.template
+//   template modernization → legacy.static.template / custom.static.template
+//   replication            → forward.replication / reverse.replication
+const CONTENT_SUBTYPES = [
+  'custom.classic.widget',
+  'legacy.dialog.classic',
+  'legacy.dialog.coral2',
+  'legacy.custom.component',
+  'legacy.static.template',
+  'custom.static.template',
+  'forward.replication',
+  'reverse.replication',
+  'unsupported.runmode',
+];
+
+// Every subtype this parser extracts, recorded in the collection's
+// `meta.parsedSubtypes`. A collection written by an older parser lacks newer
+// subtypes even when its CSV has them, so readers re-parse the CSV instead of
+// trusting such a collection (see bpa-findings-helper.js).
+const PARSED_SUBTYPES = [
+  'sling.commons.scheduler',
+  'unsupported.asset.api',
+  'javax.jcr.observation.EventListener',
+  'org.apache.sling.api.resource.observation.ResourceChangeListener',
+  'org.osgi.service.event.EventHandler',
+  'custom.guava.cache',
+  'oak.index.definition',
+  'java.io.inputstream',
+  ...CONTENT_SUBTYPES,
+];
+// What collections written before `meta.parsedSubtypes` existed can be trusted
+// for: every subtype above except those added since.
+const LEGACY_PARSED_SUBTYPES = PARSED_SUBTYPES.filter(
+  subtype => subtype !== 'java.io.inputstream' && subtype !== 'oak.index.definition'
+);
+
+/**
+ * Parse command line arguments
+ */
+function parseArgs() {
+  const args = process.argv.slice(2);
+  
+  if (args.length < 1) {
+    console.error('Usage: node bpa-local-parser.js <bpa-csv-file-path> [output-directory]');
+    console.error('');
+    console.error('Examples:');
+    console.error('  node bpa-local-parser.js ./cleaned_file6.csv');
+    console.error('  node bpa-local-parser.js ./cleaned_file6.csv ./unified-collections');
+    process.exit(1);
+  }
+  
+  return {
+    bpaFilePath: args[0],
+    outputDir: args[1] || './unified-collections'
+  };
+}
+
+/**
+ * Validate BPA file exists and is readable
+ */
+function validateBpaFile(filePath) {
+  if (!fs.existsSync(filePath)) {
+    throw new Error(`BPA file not found: ${filePath}`);
+  }
+  
+  const stats = fs.statSync(filePath);
+  if (!stats.isFile()) {
+    throw new Error(`Path is not a file: ${filePath}`);
+  }
+  
+  // Check if it's readable
+  try {
+    fs.accessSync(filePath, fs.constants.R_OK);
+  } catch (error) {
+    throw new Error(`BPA file is not readable: ${filePath}`);
+  }
+}
+
+/**
+ * Parse CSV line respecting quoted fields
+ */
+function parseCSVLine(line) {
+  const result = [];
+  let current = '';
+  let inQuotes = false;
+  let i = 0;
+  
+  while (i < line.length) {
+    const char = line[i];
+    
+    if (char === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        // Escaped quote
+        current += '"';
+        i += 2;
+      } else {
+        // Toggle quote state
+        inQuotes = !inQuotes;
+        i++;
+      }
+    } else if (char === ',' && !inQuotes) {
+      // Field separator
+      result.push(current);
+      current = '';
+      i++;
+    } else {
+      current += char;
+      i++;
+    }
+  }
+  
+  // Add the last field
+  result.push(current);
+  return result;
+}
+
+/**
+ * Parse BPA CSV file
+ */
+function parseBpaFile(filePath) {
+  try {
+    const content = fs.readFileSync(filePath, 'utf8');
+    const lines = content.split('\n').filter(line => line.trim());
+    
+    if (lines.length === 0) {
+      throw new Error('Empty BPA file');
+    }
+    
+    // Parse header
+    const headers = parseCSVLine(lines[0]);
+    console.log(`CSV Headers: ${headers.join(', ')}`);
+    
+    // Validate expected headers
+    const expectedHeaders = ['code', 'type', 'subtype', 'importance', 'identifier', 'message', 'context'];
+    const hasRequiredHeaders = expectedHeaders.every(header => headers.includes(header));
+    
+    if (!hasRequiredHeaders) {
+      console.warn('CSV headers do not match expected format, proceeding with available headers');
+    }
+    
+    // Parse data rows
+    const findings = [];
+    for (let i = 1; i < lines.length; i++) {
+      const values = parseCSVLine(lines[i]);
+      if (values.length >= headers.length) {
+        const finding = {};
+        headers.forEach((header, index) => {
+          finding[header] = values[index] || '';
+        });
+        findings.push(finding);
+      }
+    }
+    
+    console.log(`Parsed ${findings.length} findings from CSV`);
+    return { findings, headers };
+  } catch (error) {
+    throw new Error(`Error parsing BPA CSV file: ${error.message}`);
+  }
+}
+
+/**
+ * Extract findings from BPA CSV data
+ */
+function extractFindings(bpaData) {
+  const findings = bpaData.findings || [];
+  
+  if (findings.length === 0) {
+    console.warn('No findings found in BPA CSV data');
+    return [];
+  }
+  
+  console.log(`Found ${findings.length} findings in BPA CSV report`);
+  return findings;
+}
+
+/**
+ * Process scheduler findings from CSV
+ */
+function processSchedulerFindings(findings) {
+  const schedulerFindings = findings.filter(finding => 
+    finding.subtype === 'sling.commons.scheduler'
+  );
+  
+  const identifiers = {};
+  const classNames = [];
+  
+  schedulerFindings.forEach(finding => {
+    // Extract class name from identifier
+    const className = extractClassNameFromCsvFinding(finding);
+    if (className && !classNames.includes(className)) {
+      classNames.push(className);
+    }
+  });
+  
+  if (classNames.length > 0) {
+    identifiers[SCHEDULER_IDENTIFIER] = classNames;
+  }
+  
+  return {
+    subtype: PATTERN_TO_SUBTYPE.scheduler,
+    identifiers: identifiers
+  };
+}
+
+/**
+ * Process a content/legacy-UI subtype whose findings are keyed by JCR path.
+ * Groups by the `identifier` (node path); each finding contributes one entry
+ * (so the count matches the BPA report). Summary rows (code starting with `_`,
+ * e.g. `_COUNT_REP`, `_STAT`) are excluded — they share real subtype strings
+ * and would otherwise inflate counts.
+ *
+ * Returns { subtype, identifiers } where `identifiers` is keyed by the RAW JCR
+ * path (not MongoDB-safed): these paths contain underscores (`design_dialog`,
+ * `_cq_dialog`) that a dot→underscore round-trip would corrupt.
+ */
+function processContentSubtypeFindings(findings, subtype) {
+  const matched = findings.filter(f =>
+    f.subtype === subtype && !String(f.code || '').startsWith('_')
+  );
+  const identifiers = {};
+  matched.forEach(f => {
+    const key = f.identifier || f.context || subtype;
+    (identifiers[key] = identifiers[key] || []).push(f.context || f.message || key);
+  });
+  return { subtype, identifiers };
+}
+
+/**
+ * Process asset API findings from CSV
+ */
+function processAssetApiFindings(findings) {
+  const assetApiFindings = findings.filter(finding => 
+    finding.subtype === 'unsupported.asset.api'
+  );
+  
+  const identifiers = {};
+  
+  assetApiFindings.forEach(finding => {
+    // Extract class name from identifier (full path)
+    const className = finding.identifier && isValidClassName(finding.identifier) ? finding.identifier.trim() : null;
+    
+    // Extract API method from message
+    const apiMethod = extractAssetApiMethodFromMessage(finding.message);
+    
+    if (className && apiMethod) {
+      if (!identifiers[apiMethod]) {
+        identifiers[apiMethod] = [];
+      }
+      
+      if (!identifiers[apiMethod].includes(className)) {
+        identifiers[apiMethod].push(className);
+      }
+    }
+  });
+  
+  return {
+    subtype: PATTERN_TO_SUBTYPE.assetApi,
+    identifiers: identifiers
+  };
+}
+
+/**
+ * Returns true if the value is a valid class name (excludes numeric-only values like "1", "4", "10").
+ */
+function isValidClassName(value) {
+  if (!value || typeof value !== 'string') return false;
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  // Exclude pure numbers (counts, line numbers, etc.)
+  if (/^\d+$/.test(trimmed)) return false;
+  return true;
+}
+
+/**
+ * Extract full class identifier from CSV finding (returns complete path, not trimmed).
+ */
+function extractClassNameFromCsvFinding(finding) {
+  // Prefer identifier field - return full path as-is
+  if (finding.identifier && isValidClassName(finding.identifier)) {
+    return finding.identifier.trim();
+  }
+  
+  // Try to extract from message if identifier is not useful
+  if (finding.message) {
+    const classMatch = finding.message.match(/class\s+([a-zA-Z0-9_.]+)/);
+    if (classMatch) {
+      const className = classMatch[1];
+      if (isValidClassName(className)) return className;
+    }
+  }
+  
+  return finding.identifier && isValidClassName(finding.identifier) ? finding.identifier.trim() : null;
+}
+
+/**
+ * Extract Asset API method from message
+ */
+function extractAssetApiMethodFromMessage(message) {
+  if (!message) return null;
+  
+  // Look for specific API methods mentioned in the message
+  const apiMethods = [
+    'com.day.cq.dam.api.AssetManager.createAsset',
+    'com.day.cq.dam.api.AssetManager.removeAssetForBinary',
+    'com.day.cq.dam.api.AssetManager.createAssetForBinary'
+  ];
+  
+  for (const method of apiMethods) {
+    if (message.includes(method)) {
+      return method;
+    }
+  }
+  
+  // Generic fallback
+  if (message.includes('AssetManager')) {
+    return 'com.day.cq.dam.api.AssetManager';
+  }
+  
+  return null;
+}
+
+/**
+ * Process event listener findings from CSV
+ */
+function processEventListenerFindings(findings) {
+  const eventListenerFindings = findings.filter(finding => 
+    finding.subtype === 'javax.jcr.observation.EventListener'
+  );
+  
+  const identifiers = {};
+  const classNames = [];
+  
+  eventListenerFindings.forEach(finding => {
+    const className = extractClassNameFromCsvFinding(finding);
+    if (className && !classNames.includes(className)) {
+      classNames.push(className);
+    }
+  });
+  
+  if (classNames.length > 0) {
+    identifiers['javax.jcr.observation.EventListener'] = classNames;
+  }
+  
+  return {
+    subtype: 'javax.jcr.observation.EventListener',
+    identifiers: identifiers
+  };
+}
+
+/**
+ * Process resource change listener findings from CSV
+ */
+function processResourceChangeListenerFindings(findings) {
+  const resourceChangeListenerFindings = findings.filter(finding => 
+    finding.subtype === 'org.apache.sling.api.resource.observation.ResourceChangeListener'
+  );
+  
+  const identifiers = {};
+  const classNames = [];
+  
+  resourceChangeListenerFindings.forEach(finding => {
+    const className = extractClassNameFromCsvFinding(finding);
+    if (className && !classNames.includes(className)) {
+      classNames.push(className);
+    }
+  });
+  
+  if (classNames.length > 0) {
+    identifiers['org.apache.sling.api.resource.observation.ResourceChangeListener'] = classNames;
+  }
+  
+  return {
+    subtype: 'org.apache.sling.api.resource.observation.ResourceChangeListener',
+    identifiers: identifiers
+  };
+}
+
+/**
+ * Process event handler findings from CSV
+ */
+function processEventHandlerFindings(findings) {
+  const eventHandlerFindings = findings.filter(finding => 
+    finding.subtype === 'org.osgi.service.event.EventHandler'
+  );
+  
+  const identifiers = {};
+  const classNames = [];
+  
+  eventHandlerFindings.forEach(finding => {
+    const className = extractClassNameFromCsvFinding(finding);
+    if (className && !classNames.includes(className)) {
+      classNames.push(className);
+    }
+  });
+  
+  if (classNames.length > 0) {
+    identifiers['org.osgi.service.event.EventHandler'] = classNames;
+  }
+  
+  return {
+    subtype: 'org.osgi.service.event.EventHandler',
+    identifiers: identifiers
+  };
+}
+
+/**
+ * Extract the bundle/module name from a `custom.guava.cache` finding's message.
+ *
+ * Unlike scheduler/eventListener/etc., `identifier` on this subtype is a
+ * *Guava-internal* class (e.g. `com.google.common.cache.AbstractCache`) —
+ * BPA is bytecode-scanning Guava's own cache implementation classes wherever
+ * they are reachable, not the customer's classes that import them. The only
+ * customer-relevant unit is the **bundle** the message names ("The X class
+ * in the <bundle> bundle uses Y."). A real bundle can produce hundreds of
+ * these rows (one per Guava-internal class pulled in) — dedupe to one entry
+ * per bundle, not per row.
+ */
+function extractGuavaBundleFromMessage(finding) {
+  const message = finding.message || '';
+  const match = message.match(/\bin the ([\w.-]+) bundle\b/);
+  return match ? match[1] : null;
+}
+
+/**
+ * Process Guava cache findings from CSV. One entry per bundle — BPA reports
+ * every Guava-internal class it finds on that bundle's classpath, not one
+ * finding per customer file, so grouping by row or by `identifier` would
+ * bloat to hundreds of entries for a single bundle that just embeds Guava.
+ */
+function processGuavaCacheFindings(findings) {
+  const guavaCacheFindings = findings.filter(finding =>
+    finding.subtype === 'custom.guava.cache' && !String(finding.code || '').startsWith('_')
+  );
+
+  const identifiers = {};
+  const bundleNames = [];
+
+  guavaCacheFindings.forEach(finding => {
+    const bundleName = extractGuavaBundleFromMessage(finding);
+    if (bundleName) {
+      if (!bundleNames.includes(bundleName)) {
+        bundleNames.push(bundleName);
+      }
+    } else {
+      console.warn(
+        `custom.guava.cache row could not be parsed for a bundle name — dropped, not counted. ` +
+        `identifier=${finding.identifier || '(none)'} message=${JSON.stringify(finding.message || '')}`
+      );
+    }
+  });
+
+  if (bundleNames.length > 0) {
+    identifiers['custom.guava.cache'] = bundleNames;
+  }
+
+  return {
+    subtype: 'custom.guava.cache',
+    identifiers: identifiers
+  };
+}
+
+/**
+ * Process oak index findings from CSV. `identifier` is the oak index JCR path
+ * (e.g. `/content/oak:index/enablementResourceName`), not a class name — kept
+ * as raw array values (never used as an object key), so no mongo-safe
+ * round-trip risk. One real index path produces multiple raw CSV rows (one
+ * per distinct rule violation — "must follow -custom-N pattern", "path must
+ * begin with /oak:/index", "type must be lucene", etc., all for the same
+ * path) — dedupe by path per subtype, not by row. Both BPA subtypes for
+ * category OID (`index.rule.violation`, `standard.index.modification`) are
+ * emitted under the single `oakIndex` pattern, keyed separately since a path
+ * can independently need both a naming fix and a modification review.
+ */
+function processOakIndexFindings(findings) {
+  const oakIndexFindings = findings.filter(finding =>
+    (finding.subtype === 'index.rule.violation' || finding.subtype === 'standard.index.modification') &&
+    !String(finding.code || '').startsWith('_')
+  );
+
+  const identifiers = {};
+
+  oakIndexFindings.forEach(finding => {
+    const subtype = finding.subtype;
+    const indexPath = (finding.identifier || '').trim();
+    if (!indexPath) return;
+    if (!identifiers[subtype]) {
+      identifiers[subtype] = [];
+    }
+    if (!identifiers[subtype].includes(indexPath)) {
+      identifiers[subtype].push(indexPath);
+    }
+  });
+
+  return {
+    subtype: 'oak.index.definition',
+    identifiers: identifiers
+  };
+}
+
+/**
+ * Extract the referenced `java.io.*InputStream` API from a `java.io.inputstream`
+ * finding. BPA puts it in the `other` column; older exports without that column
+ * still carry it in the message ("… bundle uses java.io.FileInputStream. …") and
+ * in the context JSON (`data.toId`).
+ */
+function extractInputStreamApi(finding) {
+  const isApi = (v) => typeof v === 'string' && /^java\.io\.[\w$]*InputStream[\w$]*$/.test(v.trim());
+  if (isApi(finding.other)) return finding.other.trim();
+
+  const fromMessage = (finding.message || '').match(/\buses (java\.io\.[\w$]*InputStream[\w$]*)/);
+  if (fromMessage) return fromMessage[1];
+
+  try {
+    const toId = JSON.parse(finding.context || '{}')?.data?.toId;
+    if (isApi(toId)) return toId.trim();
+  } catch (_) {
+    // context is free text on some exports — fall through
+  }
+  return null;
+}
+
+/**
+ * Process `java.io.inputstream` findings from CSV. Keyed by the referenced API
+ * (e.g. `java.io.FileInputStream`) → flagged class names, like assetApi — the
+ * API is the classification lead in references/input-stream.md. Summary rows
+ * (`_COUNT_DG`) share the subtype string and are excluded.
+ *
+ * Also returns `bundles` (API → class → BPA bundles). The bundle is what lets
+ * input-stream-runner.js collapse rows that don't resolve to workspace source
+ * into one row per bundle. A class can appear in several bundles (for example
+ * a shaded library embedded twice), so each keeps a list.
+ */
+function processInputStreamFindings(findings) {
+  const inputStreamFindings = findings.filter(finding =>
+    finding.subtype === 'java.io.inputstream' && !String(finding.code || '').startsWith('_')
+  );
+
+  const identifiers = {};
+  const bundles = {};
+
+  inputStreamFindings.forEach(finding => {
+    const className = finding.identifier && isValidClassName(finding.identifier) ? finding.identifier.trim() : null;
+    const api = extractInputStreamApi(finding);
+    if (!className || !api) {
+      console.warn(
+        `java.io.inputstream row could not be parsed for a class/API — dropped, not counted. ` +
+        `identifier=${finding.identifier || '(none)'} message=${JSON.stringify(finding.message || '')}`
+      );
+      return;
+    }
+    const classNames = identifiers[api] = identifiers[api] || [];
+    if (!classNames.includes(className)) {
+      classNames.push(className);
+    }
+    const bundle = extractBundle(finding);
+    if (bundle) {
+      const byClass = bundles[api] = bundles[api] || {};
+      const list = byClass[className] = byClass[className] || [];
+      if (!list.includes(bundle)) list.push(bundle);
+    }
+  });
+
+  return {
+    subtype: PATTERN_TO_SUBTYPE.inputStream,
+    identifiers: identifiers,
+    bundles
+  };
+}
+
+/** BPA bundle of a finding — context JSON `data.bundle`, else the message's "in the <bundle> bundle". */
+function extractBundle(finding) {
+  try {
+    const bundle = JSON.parse(finding.context || '{}')?.data?.bundle;
+    if (typeof bundle === 'string' && bundle.trim()) return bundle.trim();
+  } catch (_) {
+    // context is free text on some exports — fall through
+  }
+  const match = (finding.message || '').match(/\bin the ([\w.-]+) bundle\b/);
+  return match ? match[1] : null;
+}
+
+/**
+ * Convert subtype to MongoDB-safe field name (matching cloud-adoption-service)
+ */
+function toMongoSafeFieldName(fieldName) {
+  return fieldName ? fieldName.replace(/\./g, '_') : null;
+}
+
+/**
+ * Convert identifier to MongoDB-safe field name (matching cloud-adoption-service)
+ */
+function toMongoSafeIdentifier(identifier) {
+  return identifier ? identifier.replace(/\./g, '_') : null;
+}
+
+/**
+ * Create unified collection structure (matching cloud-adoption-service format)
+ */
+function createUnifiedCollection(bpaData, outputDir) {
+  const findings = extractFindings(bpaData);
+  
+  if (findings.length === 0) {
+    console.warn('No findings to process');
+    return;
+  }
+  
+  // Ensure output directory exists
+  if (!fs.existsSync(outputDir)) {
+    fs.mkdirSync(outputDir, { recursive: true });
+  }
+  
+  // Initialize unified subtypes structure
+  const subtypes = {};
+  let totalFindings = 0;
+  
+  // Process scheduler findings
+  const schedulerCollection = processSchedulerFindings(findings);
+  if (Object.keys(schedulerCollection.identifiers).length > 0) {
+    const mongoSafeSubtype = toMongoSafeFieldName(schedulerCollection.subtype);
+    subtypes[mongoSafeSubtype] = {};
+    
+    Object.entries(schedulerCollection.identifiers).forEach(([identifier, classNames]) => {
+      const mongoSafeIdentifier = toMongoSafeIdentifier(identifier);
+      subtypes[mongoSafeSubtype][mongoSafeIdentifier] = classNames;
+      totalFindings += classNames.length;
+    });
+    
+    console.log(`Found ${Object.values(schedulerCollection.identifiers).flat().length} scheduler classes`);
+  }
+  
+  // Process asset API findings
+  const assetApiCollection = processAssetApiFindings(findings);
+  if (Object.keys(assetApiCollection.identifiers).length > 0) {
+    const mongoSafeSubtype = toMongoSafeFieldName(assetApiCollection.subtype);
+    subtypes[mongoSafeSubtype] = {};
+    
+    Object.entries(assetApiCollection.identifiers).forEach(([identifier, classNames]) => {
+      const mongoSafeIdentifier = toMongoSafeIdentifier(identifier);
+      subtypes[mongoSafeSubtype][mongoSafeIdentifier] = classNames;
+      totalFindings += classNames.length;
+    });
+    
+    console.log(`Found ${Object.values(assetApiCollection.identifiers).flat().length} asset API classes`);
+  }
+  
+  // Process event listener findings
+  const eventListenerCollection = processEventListenerFindings(findings);
+  if (Object.keys(eventListenerCollection.identifiers).length > 0) {
+    const mongoSafeSubtype = toMongoSafeFieldName(eventListenerCollection.subtype);
+    subtypes[mongoSafeSubtype] = {};
+    
+    Object.entries(eventListenerCollection.identifiers).forEach(([identifier, classNames]) => {
+      const mongoSafeIdentifier = toMongoSafeIdentifier(identifier);
+      subtypes[mongoSafeSubtype][mongoSafeIdentifier] = classNames;
+      totalFindings += classNames.length;
+    });
+    
+    console.log(`Found ${Object.values(eventListenerCollection.identifiers).flat().length} event listener classes`);
+  }
+  
+  // Process resource change listener findings
+  const resourceChangeListenerCollection = processResourceChangeListenerFindings(findings);
+  if (Object.keys(resourceChangeListenerCollection.identifiers).length > 0) {
+    const mongoSafeSubtype = toMongoSafeFieldName(resourceChangeListenerCollection.subtype);
+    subtypes[mongoSafeSubtype] = {};
+    
+    Object.entries(resourceChangeListenerCollection.identifiers).forEach(([identifier, classNames]) => {
+      const mongoSafeIdentifier = toMongoSafeIdentifier(identifier);
+      subtypes[mongoSafeSubtype][mongoSafeIdentifier] = classNames;
+      totalFindings += classNames.length;
+    });
+    
+    console.log(`Found ${Object.values(resourceChangeListenerCollection.identifiers).flat().length} resource change listener classes`);
+  }
+  
+  // Process event handler findings
+  const eventHandlerCollection = processEventHandlerFindings(findings);
+  if (Object.keys(eventHandlerCollection.identifiers).length > 0) {
+    const mongoSafeSubtype = toMongoSafeFieldName(eventHandlerCollection.subtype);
+    subtypes[mongoSafeSubtype] = {};
+    
+    Object.entries(eventHandlerCollection.identifiers).forEach(([identifier, classNames]) => {
+      const mongoSafeIdentifier = toMongoSafeIdentifier(identifier);
+      subtypes[mongoSafeSubtype][mongoSafeIdentifier] = classNames;
+      totalFindings += classNames.length;
+    });
+    
+    console.log(`Found ${Object.values(eventHandlerCollection.identifiers).flat().length} event handler classes`);
+  }
+
+  // Process Guava cache findings
+  const guavaCacheCollection = processGuavaCacheFindings(findings);
+  if (Object.keys(guavaCacheCollection.identifiers).length > 0) {
+    const mongoSafeSubtype = toMongoSafeFieldName(guavaCacheCollection.subtype);
+    subtypes[mongoSafeSubtype] = {};
+
+    Object.entries(guavaCacheCollection.identifiers).forEach(([identifier, bundleNames]) => {
+      const mongoSafeIdentifier = toMongoSafeIdentifier(identifier);
+      subtypes[mongoSafeSubtype][mongoSafeIdentifier] = bundleNames;
+      totalFindings += bundleNames.length;
+    });
+
+    console.log(`Found ${Object.values(guavaCacheCollection.identifiers).flat().length} bundles using Guava cache`);
+  }
+
+  // Process oak index findings
+  const oakIndexCollection = processOakIndexFindings(findings);
+  if (Object.keys(oakIndexCollection.identifiers).length > 0) {
+    const mongoSafeSubtype = toMongoSafeFieldName(oakIndexCollection.subtype);
+    subtypes[mongoSafeSubtype] = {};
+
+    Object.entries(oakIndexCollection.identifiers).forEach(([identifier, indexPaths]) => {
+      const mongoSafeIdentifier = toMongoSafeIdentifier(identifier);
+      subtypes[mongoSafeSubtype][mongoSafeIdentifier] = indexPaths;
+      totalFindings += indexPaths.length;
+    });
+
+    console.log(`Found ${Object.values(oakIndexCollection.identifiers).flat().length} oak index paths`);
+  }
+
+  // Process java.io.InputStream findings
+  const inputStreamCollection = processInputStreamFindings(findings);
+  let inputStreamBundles = null;
+  if (Object.keys(inputStreamCollection.identifiers).length > 0) {
+    const mongoSafeSubtype = toMongoSafeFieldName(inputStreamCollection.subtype);
+    subtypes[mongoSafeSubtype] = {};
+
+    Object.entries(inputStreamCollection.identifiers).forEach(([identifier, classNames]) => {
+      const mongoSafeIdentifier = toMongoSafeIdentifier(identifier);
+      subtypes[mongoSafeSubtype][mongoSafeIdentifier] = classNames;
+      totalFindings += classNames.length;
+    });
+    if (Object.keys(inputStreamCollection.bundles).length > 0) {
+      inputStreamBundles = inputStreamCollection.bundles;
+    }
+
+    console.log(`Found ${Object.values(inputStreamCollection.identifiers).flat().length} java.io.InputStream usages`);
+  }
+
+  // Process content / legacy-UI subtypes (cdw, lui, templates, replication).
+  // Keys are RAW JCR paths (not MongoDB-safed) to avoid corrupting underscores.
+  for (const subtype of CONTENT_SUBTYPES) {
+    const coll = processContentSubtypeFindings(findings, subtype);
+    const ids = Object.keys(coll.identifiers);
+    if (ids.length === 0) continue;
+    const mongoSafeSubtype = toMongoSafeFieldName(subtype);
+    subtypes[mongoSafeSubtype] = {};
+    ids.forEach(identifier => {
+      const values = coll.identifiers[identifier];
+      subtypes[mongoSafeSubtype][identifier] = values;
+      totalFindings += values.length;
+    });
+    console.log(`Found ${Object.values(coll.identifiers).flat().length} ${subtype} findings`);
+  }
+
+  // Create unified collection structure with metadata
+  const subtypeKeys = Object.keys(subtypes);
+  const unifiedCollection = {
+    subtypes: subtypes,
+    meta: {
+      timestamp: new Date().toISOString(),
+      source: 'local-bpa-parser',
+      totalFindings: totalFindings,
+      subtypeCount: subtypeKeys.length,
+      parsedSubtypes: PARSED_SUBTYPES,
+      // API → class → BPA bundles (java.io.inputstream only); lets the reader
+      // emit one target per bundle so rows can be grouped per bundle downstream.
+      ...(inputStreamBundles ? { inputStreamBundles } : {})
+    }
+  };
+
+  // Write unified collection file
+  const unifiedPath = path.join(outputDir, 'unified-collection.json');
+  fs.writeFileSync(unifiedPath, JSON.stringify(unifiedCollection, null, 2));
+  console.log(`Created unified collection file: ${unifiedPath}`);
+
+  return {
+    subtypes: subtypeKeys,
+    totalFindings,
+    unifiedCollection
+  };
+}
+
+
+/**
+ * Main function
+ */
+function main() {
+  try {
+    const { bpaFilePath, outputDir } = parseArgs();
+    
+    console.log('BPA Local Parser');
+    console.log('================');
+    console.log(`BPA File: ${bpaFilePath}`);
+    console.log(`Output Directory: ${outputDir}`);
+    console.log('Format: Unified (cloud-adoption-service compatible)');
+    console.log('');
+    
+    // Validate input file
+    validateBpaFile(bpaFilePath);
+    
+    // Parse BPA file
+    console.log('Parsing BPA CSV file...');
+    const bpaData = parseBpaFile(bpaFilePath);
+    
+    // Create unified collection
+    console.log('Creating unified collection...');
+    const summary = createUnifiedCollection(bpaData, outputDir);
+    
+    console.log('');
+    console.log('✅ Successfully created unified code transformer collection');
+    console.log(`📁 Output directory: ${outputDir}`);
+    console.log(`📊 Total subtypes: ${summary?.subtypes?.length || 0}`);
+    console.log(`🎯 Total findings: ${summary?.totalFindings || 0}`);
+    
+    if (summary?.subtypes?.length > 0) {
+      console.log('');
+      console.log('Available subtypes:');
+      summary.subtypes.forEach(subtype => {
+        const subtypeData = summary.unifiedCollection?.subtypes?.[subtype];
+        const count = subtypeData ? Object.values(subtypeData).flat().length : 0;
+        console.log(`  - ${subtype}: ${count} classes`);
+      });
+    }
+    
+  } catch (error) {
+    console.error('❌ Error:', error.message);
+    process.exit(1);
+  }
+}
+
+// Run the script if called directly
+if (require.main === module) {
+  main();
+}
+
+module.exports = {
+  validateBpaFile,
+  parseBpaFile,
+  createUnifiedCollection,
+  extractFindings,
+  PARSED_SUBTYPES,
+  LEGACY_PARSED_SUBTYPES
+};
