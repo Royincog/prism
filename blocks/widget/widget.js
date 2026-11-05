@@ -13,14 +13,14 @@ function parseWidgetHref(pathname) {
 }
 
 /**
- * Builds a widget asset URL.
- * @param {string} widgetPath Folder path under `/widgets/`
+ * Builds a widget asset URL (served from `/blocks/widgets/` on the code bus).
+ * @param {string} widgetPath Folder path under `/widgets/` in authored links
  * @param {string} widgetName Widget file name without extension
  * @param {string} extension File extension (`html`, `css`, `js`)
  */
 function widgetUrl(widgetPath, widgetName, extension) {
   const prefix = widgetPath ? `${widgetPath}/` : '';
-  return `${window.hlx.codeBasePath}/widgets/${prefix}${widgetName}.${extension}`;
+  return `${window.hlx.codeBasePath}/blocks/widgets/${prefix}${widgetName}.${extension}`;
 }
 
 /**
@@ -64,6 +64,9 @@ export default async function decorate(widget) {
     applyWidgetShell(widget, source, widgetName, searchParams);
 
     const resp = await fetch(widgetUrl(widgetPath, widgetName, 'html'));
+    if (!resp.ok) {
+      throw new Error(`widget HTML ${resp.status} ${resp.statusText}`);
+    }
     widget.innerHTML = await resp.text();
 
     const cssLoaded = loadCSS(widgetUrl(widgetPath, widgetName, 'css'));
