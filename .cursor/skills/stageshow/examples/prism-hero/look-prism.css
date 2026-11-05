@@ -1,0 +1,30 @@
+/* Prism / X-minimal look — mapped from styles/base.css */
+.ph .ss-stage {
+  --ss-canvas: #000000;
+  --ss-surface: #16181c;
+  --ss-chrome: #1d1f23;
+  --ss-well: #000000;
+  --ss-raised: #17181c;
+  --ss-line: #2f3336;
+  --ss-line-faint: #38444d;
+  --ss-text-strong: #e7e9ea;
+  --ss-text: #e7e9ea;
+  --ss-text-faint: #71767b;
+  --ss-icon: #e7e9ea;
+  --ss-icon-faint: #71767b;
+  --ss-accent: #1d9bf0;
+  --ss-accent-2: #1a8cd8;
+  --ss-accent-soft: rgba(29, 155, 240, 0.12);
+  --ss-accent-text: #1d9bf0;
+  --ss-success: #00ba7c;
+  --ss-success-soft: rgba(0, 186, 124, 0.15);
+  --ss-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --ss-mono: ui-monospace, Menlo, monospace;
+  --ss-radius-sm: 6px;
+  --ss-radius-md: 8px;
+  --ss-radius-lg: 16px;
+  --ss-radius-window: 12px;
+  --ss-radius-pill: 999px;
+  --ss-control: 36px;
+  --ss-row: 26px;
+}

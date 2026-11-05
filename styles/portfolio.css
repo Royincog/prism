@@ -1,0 +1,67 @@
+/* Global portfolio patterns from DESIGN.md — loaded lazily after LCP */
+
+main .section.light,
+main .section.highlight {
+  background-color: var(--card);
+}
+
+a.button.primary,
+button.button.primary {
+  border-color: var(--primary);
+  background-color: var(--primary);
+  color: var(--primary-foreground);
+  font-weight: 700;
+  border-radius: 9999px;
+  min-height: 36px;
+  padding: 0 16px;
+}
+
+a.button.primary:hover,
+a.button.primary:focus-visible,
+button.button.primary:hover,
+button.button.primary:focus-visible {
+  border-color: var(--primary-hover);
+  background-color: var(--primary-hover);
+  color: var(--primary-foreground);
+}
+
+a.button.accent,
+button.button.accent {
+  border-color: var(--primary);
+  background-color: var(--primary);
+  color: var(--primary-foreground);
+  font-weight: 700;
+  border-radius: 9999px;
+}
+
+a.button.accent:hover,
+a.button.accent:focus-visible,
+button.button.accent:hover,
+button.button.accent:focus-visible {
+  border-color: var(--primary-hover);
+  background-color: var(--primary-hover);
+}
+
+a:any-link:focus-visible,
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+main .default-content-wrapper {
+  max-width: 600px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

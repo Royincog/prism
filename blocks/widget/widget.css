@@ -1,3 +1,36 @@
+/* Widget shell — full-bleed hero demos, no double card chrome */
 .widget {
   display: block;
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 0;
+}
+
+.widget-wrapper:has(.portfolio-hero) {
+  padding: 0;
+  max-width: none;
+}
+
+.widget-wrapper:has(.portfolio-hero) > div {
+  max-width: none;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+main .section:has(.portfolio-hero) > div {
+  max-width: 1248px;
+}
+
+main .section:has(.portfolio-hero) .portfolio-hero {
+  max-width: 720px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+@media (width >= 900px) {
+  main .section:has(.portfolio-hero) .portfolio-hero {
+    margin-left: 0;
+    margin-right: auto;
+  }
 }

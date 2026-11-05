@@ -1,0 +1,134 @@
+.ph .ss-stage {
+  --gutter: 28px;
+  overflow: hidden;
+  border-radius: 14px;
+  background: var(--ss-well);
+}
+
+.ph .ph-win {
+  position: absolute;
+  top: var(--gutter);
+  left: var(--gutter);
+  width: 664px;
+  height: 380px;
+}
+
+.ph .ph-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px;
+  height: 100%;
+  box-sizing: border-box;
+}
+
+.ph .ph-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ph .ph-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ss-text-strong);
+}
+
+.ph .ph-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: var(--ss-control);
+  padding: 0 12px;
+  border: 1px solid var(--ss-line);
+  border-radius: var(--ss-radius-pill);
+  background: var(--ss-canvas);
+  color: var(--ss-text-faint);
+  font-size: 15px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.ph .ph-search[data-focus] {
+  border-color: var(--ss-accent);
+  box-shadow: 0 0 0 1px var(--ss-accent);
+  color: var(--ss-text);
+}
+
+.ph .ph-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  border: 1px solid var(--ss-line);
+  border-radius: var(--ss-radius-lg);
+  overflow: hidden;
+  flex: 1;
+}
+
+.ph .ph-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--ss-line);
+  background: var(--ss-surface);
+  transition: background 0.15s ease;
+}
+
+.ph .ph-row:last-child {
+  border-bottom: none;
+}
+
+.ph .ph-row[data-active] {
+  background: var(--ss-chrome);
+}
+
+.ph .ph-row-name {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ss-text-strong);
+}
+
+.ph .ph-row-meta {
+  font-size: 13px;
+  color: var(--ss-text-faint);
+  margin-top: 2px;
+}
+
+.ph .ph-chip {
+  font-size: 13px;
+  font-weight: 700;
+  padding: 4px 12px;
+  border-radius: var(--ss-radius-pill);
+  background: var(--ss-success-soft);
+  color: var(--ss-success);
+  opacity: 0;
+  transform: scale(0.96);
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+
+.ph .ph-chip[data-show] {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.ph .ph-highlight {
+  position: absolute;
+  pointer-events: none;
+  border: 2px solid var(--ss-accent);
+  border-radius: var(--ss-radius-lg);
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.ph .ph-highlight[data-show] {
+  opacity: 1;
+}
+
+.ph.ss-stage[data-layout='compact'] .ph-win {
+  width: 302px;
+  height: 360px;
+  left: 28px;
+  top: 20px;
+}
